@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Smart Mirror — AI-powered digital mirror interface with face recognition, mood detection, and voice assistant." />
+    <title>Smart Mirror — Lumo</title>
+
+    <!-- Google Fonts: Outfit (modern, clean) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Weather Icons (OpenWeatherMap compatible) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/weather-icons/2.0.12/css/weather-icons.min.css" />
+
+    <link rel="stylesheet" href="/css/mirror.css" />
+</head>
+<body>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         LAYER 0: Live Camera Feed (fullscreen, mirrored)
+         ═══════════════════════════════════════════════════════════════════ -->
+    <video id="camera-feed" autoplay playsinline muted></video>
+    <canvas id="frame-canvas" style="display:none;"></canvas>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         LAYER 1: UI Overlay
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="overlay">
+
+        <!-- ── Top Left: Clock & Date ─────────────────────────────────── -->
+        <div id="widget-clock" class="widget top-left">
+            <div id="clock-time" class="clock-time">00:00</div>
+            <div id="clock-seconds" class="clock-seconds">00</div>
+            <div id="clock-date" class="clock-date">Loading...</div>
+        </div>
+
+        <!-- ── Top Right: Weather ─────────────────────────────────────── -->
+        <div id="widget-weather" class="widget top-right glass-panel">
+            <div class="widget-header">
+                <span class="widget-icon">☀</span>
+                <span class="widget-label">WEATHER</span>
+            </div>
+            <div id="weather-content" class="weather-content">
+                <div class="weather-temp">
+                    <span id="weather-temp-value">--</span>
+                    <span class="weather-unit">°C</span>
+                </div>
+                <div id="weather-desc" class="weather-desc">Loading...</div>
+                <div class="weather-details">
+                    <span id="weather-humidity" class="weather-detail">
+                        <span class="detail-icon">💧</span>
+                        <span>--%</span>
+                    </span>
+                    <span id="weather-wind" class="weather-detail">
+                        <span class="detail-icon">💨</span>
+                        <span>-- km/h</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Bottom Left: Market Ticker ─────────────────────────────── -->
+        <div id="widget-market" class="widget bottom-left glass-panel">
+            <div class="widget-header">
+                <span class="widget-icon">📈</span>
+                <span class="widget-label">NIFTY 50</span>
+            </div>
+            <div id="market-content" class="market-content">
+                <div id="market-price" class="market-price">--,---</div>
+                <div id="market-change" class="market-change neutral">
+                    <span id="market-change-value">0.00</span>
+                    <span id="market-change-pct">(0.00%)</span>
+                </div>
+                <div class="market-range">
+                    <span id="market-low" class="range-item">L: --</span>
+                    <span class="range-sep">│</span>
+                    <span id="market-high" class="range-item">H: --</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Bottom Right: User Panel (tasks + greeting) ────────────── -->
+        <div id="widget-user" class="widget bottom-right glass-panel hidden">
+            <div class="widget-header">
+                <span class="widget-icon">👤</span>
+                <span id="user-name" class="widget-label">USER</span>
+            </div>
+            <div id="user-greeting" class="user-greeting hidden"></div>
+            <div id="task-list" class="task-list">
+                <div class="task-empty">No tasks yet</div>
+            </div>
+        </div>
+
+        <!-- ── Center: Greeting Overlay (fades in/out) ────────────────── -->
+        <div id="greeting-overlay" class="greeting-overlay hidden">
+            <div id="greeting-emoji" class="greeting-emoji">😊</div>
+            <div id="greeting-text" class="greeting-text"></div>
+            <div id="greeting-mood" class="greeting-mood"></div>
+        </div>
+
+        <!-- ── Center Bottom: Voice Assistant Status ──────────────────── -->
+        <div id="widget-voice" class="widget center-bottom">
+            <div id="voice-orb" class="voice-orb">
+                <div class="orb-ring"></div>
+                <div class="orb-ring ring-2"></div>
+                <div class="orb-ring ring-3"></div>
+                <div class="orb-icon">🎙</div>
+            </div>
+            <div id="voice-status" class="voice-status">Say "Hey Lumo"</div>
+            <div id="voice-transcript" class="voice-transcript"></div>
+        </div>
+
+        <!-- ── Top Center: Assistant Response ─────────────────────────── -->
+        <div id="widget-assistant" class="widget top-center glass-panel hidden">
+            <div class="widget-header">
+                <span class="widget-icon">✦</span>
+                <span class="widget-label">LUMO</span>
+            </div>
+            <div id="assistant-text" class="assistant-text"></div>
+        </div>
+
+        <!-- ── Connection Status ──────────────────────────────────────── -->
+        <div id="connection-status" class="connection-badge disconnected">
+            <span class="conn-dot"></span>
+            <span id="conn-text">Connecting...</span>
+        </div>
+
+        <!-- ── Mood Scan Indicator ────────────────────────────────────── -->
+        <div id="mood-scanner" class="mood-scanner hidden">
+            <div class="scan-bar"></div>
+            <span class="scan-text">Scanning mood...</span>
+        </div>
+
+    </div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>

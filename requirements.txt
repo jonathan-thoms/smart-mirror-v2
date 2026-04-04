@@ -1,0 +1,35 @@
+# ─── Smart Mirror Backend Dependencies ───
+
+# Web Framework & Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+websockets>=12.0
+
+# Vision & AI
+opencv-python-headless>=4.9.0
+deepface>=0.0.93
+tf-keras
+numpy
+Pillow
+
+# Voice Pipeline (free, offline)
+vosk>=0.3.45
+SpeechRecognition>=3.10.4
+
+# Text-to-Speech (generates MP3 for streaming to Pi)
+gTTS>=2.5.1
+
+# LLM
+groq>=0.9.0
+
+# Audio Playback (local MP3 on PC if needed)
+pygame>=2.5.2
+
+# Market Data
+yfinance>=0.2.40
+
+# Weather & HTTP
+requests>=2.31.0
+
+# Utilities
+python-dotenv>=1.0.1
