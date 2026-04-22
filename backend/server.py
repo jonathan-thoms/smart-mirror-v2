@@ -44,6 +44,17 @@ music_player = MusicPlayer()
 audio_playing = False
 
 
+# ─── Safe WebSocket Send ────────────────────────────────────────────────────
+
+async def safe_send(ws: WebSocket, data: dict) -> bool:
+    """Send JSON to WebSocket, silently handling closed connections."""
+    try:
+        await ws.send_json(data)
+        return True
+    except (RuntimeError, Exception):
+        return False
+
+
 # ─── TTS Helper ─────────────────────────────────────────────────────────────
 
 async def generate_tts(text: str) -> str | None:
@@ -102,6 +113,12 @@ async def serve_index():
     return FileResponse("frontend/index.html")
 
 
+@app.get("/test-speech")
+async def serve_speech_test():
+    """Speech recognition test page."""
+    return FileResponse("frontend/test-speech.html")
+
+
 # ─── WebSocket Endpoint ────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -124,13 +141,19 @@ async def websocket_endpoint(ws: WebSocket):
             if msg_type == "frame":
                 asyncio.create_task(handle_frame(ws, msg.get("data", "")))
 
-            elif msg_type == "audio_chunk":
-                asyncio.create_task(handle_audio(ws, msg.get("data", "")))
-
             elif msg_type == "voice_command":
                 asyncio.create_task(
                     handle_voice_command(ws, msg.get("text", ""))
                 )
+
+            elif msg_type == "voice_status_update":
+                state = msg.get("data", {}).get("state")
+                if state == "wake_word":
+                    logger.info("🎤 Wake word detected (from browser)")
+
+            elif msg_type == "audio_done":
+                audio_playing = False
+                logger.info("Audio playback finished on client — mic resumed")
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
@@ -157,11 +180,11 @@ async def handle_frame(ws: WebSocket, b64_data: str):
         user_name = face_result["name"]
         session = session_mgr.get_or_create(user_name)
 
-        await ws.send_json({"type": "face_result", "data": face_result})
+        await safe_send(ws, {"type": "face_result", "data": face_result})
 
         # Send user's tasks
         tasks = session_mgr.get_tasks(user_name)
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "tasks",
             "data": {"user": user_name, "items": tasks}
         })
@@ -178,7 +201,7 @@ async def handle_frame(ws: WebSocket, b64_data: str):
             result = session_mgr.add_emotion_sample(scanning_user, emotion)
 
             # Send live emotion data
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "mood_status",
                 "data": {"emotion": emotion, "scanning": True}
             })
@@ -186,7 +209,7 @@ async def handle_frame(ws: WebSocket, b64_data: str):
             if result:
                 # Scan complete — dominant mood determined
                 dominant = result["dominant_emotion"]
-                await ws.send_json({
+                await safe_send(ws, {
                     "type": "mood_result",
                     "data": result
                 })
@@ -212,7 +235,7 @@ async def send_mood_greeting(ws: WebSocket, user: str, mood: str):
     greeting_text = greetings.get(mood, f"Hello, {user}!")
 
     # Send greeting text
-    await ws.send_json({
+    await safe_send(ws, {
         "type": "greeting",
         "data": {"text": greeting_text, "user": user, "mood": mood}
     })
@@ -221,18 +244,35 @@ async def send_mood_greeting(ws: WebSocket, user: str, mood: str):
     audio_playing = True
     tts_b64 = await generate_tts(greeting_text)
     if tts_b64:
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "tts_audio",
             "data": tts_b64
         })
 
-    # Select and send mood music
+    # Select and send mood music (or show suggestion if no files)
     track = music_player.get_track_for_mood(mood)
     if track:
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "play_music",
             "data": track
         })
+
+    # Always send a music notification to the UI
+    mood_labels = {
+        "happy": "Upbeat Vibes", "sad": "Calm & Soothing",
+        "angry": "Chill Beats", "surprise": "Feel-Good Mix",
+        "fear": "Relaxing Ambient", "neutral": "Easy Listening",
+        "disgust": "Comfort Tunes",
+    }
+    await safe_send(ws, {
+        "type": "music_notification",
+        "data": {
+            "mood": mood,
+            "label": mood_labels.get(mood, "Music"),
+            "has_track": track is not None,
+            "track_name": track["track"] if track else None,
+        }
+    })
 
 
 # ─── Audio Processing (Wake Word + STT) ────────────────────────────────────
@@ -257,13 +297,13 @@ async def handle_audio(ws: WebSocket, b64_audio: str):
 
     if event == "wake_word":
         logger.info("🎤 Wake word detected!")
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "voice_status",
             "data": {"state": "listening", "text": "Listening..."}
         })
 
     elif event == "partial":
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "voice_status",
             "data": {"state": "listening", "text": result["text"]}
         })
@@ -272,7 +312,7 @@ async def handle_audio(ws: WebSocket, b64_audio: str):
         command_text = result["text"]
         logger.info(f"🎤 Command: {command_text}")
 
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "voice_status",
             "data": {"state": "processing", "text": command_text}
         })
@@ -280,7 +320,7 @@ async def handle_audio(ws: WebSocket, b64_audio: str):
         await handle_voice_command(ws, command_text)
 
     elif event == "timeout":
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "voice_status",
             "data": {"state": "idle", "text": ""}
         })
@@ -302,7 +342,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
         if action == "add_task":
             tasks = session_mgr.add_task(user, command["text"])
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "tasks",
                 "data": {"user": user, "items": tasks}
             })
@@ -310,7 +350,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
         elif action == "complete_task":
             tasks = session_mgr.complete_task(user, command["id"])
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "tasks",
                 "data": {"user": user, "items": tasks}
             })
@@ -318,7 +358,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
         elif action == "remove_task":
             tasks = session_mgr.remove_task(user, command["id"])
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "tasks",
                 "data": {"user": user, "items": tasks}
             })
@@ -326,7 +366,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
         elif action == "list_tasks":
             tasks = session_mgr.get_tasks(user)
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "tasks",
                 "data": {"user": user, "items": tasks}
             })
@@ -340,7 +380,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
         elif action == "clear_done":
             tasks = session_mgr.clear_done_tasks(user)
-            await ws.send_json({
+            await safe_send(ws, {
                 "type": "tasks",
                 "data": {"user": user, "items": tasks}
             })
@@ -354,7 +394,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
                     f"with {w['description']}. "
                     f"Humidity is {w['humidity']}%."
                 )
-                await ws.send_json({
+                await safe_send(ws, {
                     "type": "weather",
                     "data": data_feeds.latest_weather
                 })
@@ -369,7 +409,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
                     f"NIFTY 50 is at {m['price']}, "
                     f"{direction} {abs(m['change_pct'])}% today."
                 )
-                await ws.send_json({
+                await safe_send(ws, {
                     "type": "market",
                     "data": data_feeds.latest_market
                 })
@@ -380,7 +420,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
 
     else:
         # Send to Groq LLM for general conversation
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "voice_status",
             "data": {"state": "processing", "text": "Thinking..."}
         })
@@ -390,7 +430,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
         )
 
     # Send assistant response
-    await ws.send_json({
+    await safe_send(ws, {
         "type": "assistant_response",
         "data": {"text": reply, "user": user}
     })
@@ -399,12 +439,12 @@ async def handle_voice_command(ws: WebSocket, text: str):
     audio_playing = True
     tts_b64 = await generate_tts(reply)
     if tts_b64:
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "tts_audio",
             "data": tts_b64
         })
 
-    await ws.send_json({
+    await safe_send(ws, {
         "type": "voice_status",
         "data": {"state": "idle", "text": ""}
     })
@@ -415,12 +455,12 @@ async def handle_voice_command(ws: WebSocket, text: str):
 async def send_feed_data(ws: WebSocket):
     """Send current weather and market data."""
     if data_feeds.latest_weather:
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "weather",
             "data": data_feeds.latest_weather
         })
     if data_feeds.latest_market:
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "market",
             "data": data_feeds.latest_market
         })
@@ -436,14 +476,14 @@ async def periodic_data_sender(ws: WebSocket):
 
             # Market data every 30 seconds
             if data_feeds.latest_market:
-                await ws.send_json({
+                await safe_send(ws, {
                     "type": "market",
                     "data": data_feeds.latest_market
                 })
 
             # Weather data every 5 minutes (10 * 30s)
             if counter % 10 == 0 and data_feeds.latest_weather:
-                await ws.send_json({
+                await safe_send(ws, {
                     "type": "weather",
                     "data": data_feeds.latest_weather
                 })
@@ -451,20 +491,6 @@ async def periodic_data_sender(ws: WebSocket):
         pass
 
 
-# ─── Audio playback completion handler ──────────────────────────────────────
-
-@app.websocket("/ws/audio-done")
-async def audio_done_handler(ws: WebSocket):
-    """Pi notifies when TTS/music finishes so we can resume mic listening."""
-    global audio_playing
-    await ws.accept()
-    try:
-        while True:
-            await ws.receive_text()
-            audio_playing = False
-            logger.info("Audio playback completed on Pi — mic resumed")
-    except WebSocketDisconnect:
-        pass
 
 
 # ─── Utilities ──────────────────────────────────────────────────────────────

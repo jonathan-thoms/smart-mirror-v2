@@ -13,6 +13,7 @@
     const RECONNECT_DELAY = 3000;      // ms before reconnect attempt
     const GREETING_DISPLAY_TIME = 8000; // ms to show greeting overlay
     const ASSISTANT_DISPLAY_TIME = 10000;
+    const MUSIC_DISPLAY_TIME = 15000;   // ms to show music notification
 
     // ── State ──────────────────────────────────────────────────────────────
     let ws = null;
@@ -69,11 +70,20 @@
     const widgetAssistant = $("widget-assistant");
     const assistantText = $("assistant-text");
 
+    // Music notification
+    const musicNotif    = $("music-notification");
+    const musicLabel    = $("music-label");
+    const musicTrack    = $("music-track");
+    let musicNotifTimer = null;
+
     // Status
     const connBadge     = $("connection-status");
     const connText      = $("conn-text");
     const moodScanner   = $("mood-scanner");
 
+    // Speech debug
+    const speechDebug   = $("speech-debug");
+    const speechDbgText = $("speech-debug-text");
 
     // ═══════════════════════════════════════════════════════════════════════
     //  1. CLOCK
@@ -150,63 +160,151 @@
 
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  4. AUDIO CAPTURE (for wake word / STT)
+    //  4. VOICE RECOGNITION (Web Speech API — wake word + STT)
     // ═══════════════════════════════════════════════════════════════════════
 
-    async function initAudioCapture() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                }
-            });
+    const WAKE_PHRASE = "hey lumo";
+    let recognition = null;
+    let isWakeWordActive = false;  // true = listening for a command after wake word
 
-            audioContext = new AudioContext({ sampleRate: 16000 });
-            const source = audioContext.createMediaStreamSource(stream);
+    // All the ways Chrome might hear "Hey Lumo"
+    const WAKE_VARIANTS = [
+        "hey lumo", "a lumo", "hey limo", "hey luma", "hey loumo",
+        "hello lumo", "hey lumoo", "hey lomo", "he lumo", "hey loomo",
+        "hey luma", "heylumo", "hey llamo", "hey lobo"
+    ];
 
-            await audioContext.audioWorklet.addModule("/js/audio-processor.js");
-            audioProcessorNode = new AudioWorkletNode(audioContext, "audio-capture");
+    function matchesWakeWord(text) {
+        const lower = text.toLowerCase();
+        return WAKE_VARIANTS.some(v => lower.includes(v));
+    }
 
-            audioProcessorNode.port.onmessage = (e) => {
-                if (!ws || ws.readyState !== WebSocket.OPEN) return;
-                if (isTTSPlaying) return; // Mute mic during TTS/music
-
-                const float32 = e.data;
-                // Convert Float32 → Int16 PCM
-                const int16 = new Int16Array(float32.length);
-                for (let i = 0; i < float32.length; i++) {
-                    const sample = Math.max(-1, Math.min(1, float32[i]));
-                    int16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                }
-
-                // Encode as base64
-                const b64 = arrayBufferToBase64(int16.buffer);
-                ws.send(JSON.stringify({
-                    type: "audio_chunk",
-                    data: b64,
-                }));
-            };
-
-            source.connect(audioProcessorNode);
-            // Do NOT connect to destination (no playback of raw mic)
-            isAudioStreaming = true;
-            console.log("🎙 Audio capture initialised (16kHz PCM)");
-
-        } catch (err) {
-            console.warn("⚠ Audio capture not available:", err.message);
+    function updateDebugBar(text, isWake = false) {
+        if (speechDbgText) speechDbgText.textContent = text;
+        if (speechDebug) {
+            if (isWake) {
+                speechDebug.classList.add("wake-detected");
+            } else {
+                speechDebug.classList.remove("wake-detected");
+            }
         }
     }
 
-    function arrayBufferToBase64(buffer) {
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
+    function initVoiceRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.warn("⚠ Web Speech API not available in this browser");
+            updateDebugBar("Web Speech API not available");
+            return;
         }
-        return btoa(binary);
+
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = (event) => {
+            if (isTTSPlaying) return; // Ignore during playback
+
+            // Scan ALL results (not just latest) for better detection
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                const transcript = result[0].transcript.trim();
+                const lower = transcript.toLowerCase();
+
+                // Always update the debug bar with what's being heard
+                updateDebugBar(transcript);
+
+                if (!isWakeWordActive) {
+                    // ── Scanning for wake word (check even interim) ────
+                    if (matchesWakeWord(lower)) {
+                        isWakeWordActive = true;
+                        console.log(`🎤 Wake word detected! (heard: "${transcript}")`);
+                        updateDebugBar(`✅ WAKE WORD: "${transcript}"`, true);
+                        setVoiceState("listening");
+
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: "voice_status_update",
+                                data: { state: "wake_word" }
+                            }));
+                        }
+
+                        // Reset recognition to capture fresh command
+                        recognition.stop();
+                        return; // Stop processing once wake word found
+                    }
+                } else {
+                    // ── Capturing command after wake word ─────────────
+                    if (result.isFinal) {
+                        const command = transcript;
+                        // Filter out the wake word from the command
+                        let cleaned = command;
+                        for (const v of WAKE_VARIANTS) {
+                            cleaned = cleaned.replace(new RegExp(v, "gi"), "");
+                        }
+                        cleaned = cleaned.trim();
+
+                        if (cleaned.length > 2) {
+                            console.log(`🎤 Command: "${cleaned}"`);
+                            updateDebugBar(`📤 Command: "${cleaned}"`);
+                            isWakeWordActive = false;
+                            setVoiceState("processing");
+
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({
+                                    type: "voice_command",
+                                    text: cleaned,
+                                }));
+                            }
+                        }
+                    } else {
+                        // Show interim transcript in orb and debug bar
+                        voiceTranscript.textContent = transcript;
+                        updateDebugBar(`🎤 Hearing: "${transcript}"`, true);
+                    }
+                }
+            }
+        };
+
+        recognition.onend = () => {
+            // Auto-restart — Chrome stops recognition periodically
+            const delay = isWakeWordActive ? 50 : 200;
+            setTimeout(() => {
+                try {
+                    recognition.start();
+                    updateDebugBar(isWakeWordActive ? "Listening for command..." : "Say 'Hey Lumo'...");
+                } catch(e) { /* already started */ }
+            }, delay);
+        };
+
+        recognition.onerror = (event) => {
+            if (event.error === "no-speech") {
+                updateDebugBar("(silence) Say 'Hey Lumo'...");
+                return;
+            }
+            if (event.error === "aborted") return;
+
+            console.warn("🎤 Speech recognition error:", event.error);
+            updateDebugBar(`Error: ${event.error}`);
+
+            if (isWakeWordActive && event.error === "network") {
+                isWakeWordActive = false;
+                setVoiceState("idle");
+            }
+        };
+
+        // Start listening
+        try {
+            recognition.start();
+            isAudioStreaming = true;
+            updateDebugBar("Say 'Hey Lumo'...");
+            console.log("🎤 Voice recognition started (Web Speech API)");
+        } catch (e) {
+            console.warn("⚠ Could not start speech recognition:", e.message);
+            updateDebugBar("Failed to start: " + e.message);
+        }
     }
 
 
@@ -273,6 +371,7 @@
             case "tasks":             updateTasks(msg.data);            break;
             case "tts_audio":         playTTSAudio(msg.data);           break;
             case "play_music":        playMusic(msg.data);              break;
+            case "music_notification": showMusicNotification(msg.data); break;
             case "assistant_response": showAssistantResponse(msg.data); break;
             case "voice_status":      updateVoiceStatus(msg.data);      break;
             default:
@@ -416,17 +515,20 @@
             setVoiceState("idle");
             URL.revokeObjectURL(url);
             currentAudio = null;
+            notifyAudioDone();
         };
         currentAudio.onerror = () => {
             isTTSPlaying = false;
             setVoiceState("idle");
             URL.revokeObjectURL(url);
             currentAudio = null;
+            notifyAudioDone();
         };
         currentAudio.play().catch(err => {
             console.warn("TTS playback failed:", err);
             isTTSPlaying = false;
             setVoiceState("idle");
+            notifyAudioDone();
         });
     }
 
@@ -440,10 +542,37 @@
         audio.volume = 0.4; // Background music volume
         audio.onended = () => {
             isTTSPlaying = false;
+            notifyAudioDone();
         };
         audio.play().catch(err => {
             console.warn("Music playback failed:", err);
         });
+    }
+
+    // ── Music Notification ("Now Playing" bar) ─────────────────────────────
+    function showMusicNotification(data) {
+        if (!data) return;
+
+        musicLabel.textContent = data.has_track ? "NOW PLAYING" : "SUGGESTED";
+        musicTrack.textContent = data.has_track
+            ? data.track_name || data.label
+            : `${data.label} ♪`;
+
+        musicNotif.classList.remove("hidden");
+
+        // Clear previous timer
+        if (musicNotifTimer) clearTimeout(musicNotifTimer);
+        musicNotifTimer = setTimeout(() => {
+            musicNotif.classList.add("hidden");
+            musicNotifTimer = null;
+        }, MUSIC_DISPLAY_TIME);
+    }
+
+    // ── Notify backend audio finished (un-gates the mic) ──────────────────
+    function notifyAudioDone() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "audio_done" }));
+        }
     }
 
     // ── Assistant Response ─────────────────────────────────────────────────
@@ -514,8 +643,8 @@
         // Start camera
         await initCamera();
 
-        // Start audio capture (for wake-word detection)
-        await initAudioCapture();
+        // Start voice recognition (Web Speech API — wake word + STT)
+        initVoiceRecognition();
 
         // Connect to backend
         connectWebSocket();

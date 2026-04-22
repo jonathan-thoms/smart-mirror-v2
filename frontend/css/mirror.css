@@ -53,16 +53,23 @@
     box-sizing: border-box;
 }
 
+html {
+    background: var(--black);         /* Fallback when camera is off */
+}
+
 html, body {
     width: 100vw;
     height: 100vh;
     overflow: hidden;
-    background: var(--black);
     font-family: var(--font);
     color: var(--white);
     cursor: none;
     user-select: none;
     -webkit-font-smoothing: antialiased;
+}
+
+body {
+    background: transparent;          /* Let video show through */
 }
 
 /* Hide scrollbar */
@@ -78,7 +85,7 @@ body { scrollbar-width: none; }
     width: 100vw;
     height: 100vh;
     object-fit: cover;
-    z-index: -1;
+    z-index: 0;
     transform: scaleX(-1);           /* MIRROR EFFECT */
     filter: brightness(0.85) contrast(1.05);
 }
@@ -604,6 +611,103 @@ body { scrollbar-width: none; }
 }
 
 
+/* ─── Music Notification Bar ───────────────────────────────────────────── */
+.music-notification {
+    position: absolute;
+    left: var(--pad-xl);
+    bottom: calc(var(--pad-xl) + 130px);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, rgba(255, 0, 229, 0.12), rgba(0, 229, 255, 0.08));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid rgba(255, 0, 229, 0.2);
+    border-radius: 14px;
+    pointer-events: auto;
+    animation: slideInLeft 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+    box-shadow: 0 0 30px rgba(255, 0, 229, 0.1);
+    z-index: 5;
+}
+
+.music-icon {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.music-note {
+    font-size: 1.4rem;
+    color: var(--magenta);
+    animation: noteFloat 2s ease-in-out infinite;
+}
+
+.music-note.note-2 {
+    position: absolute;
+    font-size: 0.9rem;
+    top: -2px;
+    right: -4px;
+    animation: noteFloat 2s ease-in-out infinite 0.5s;
+    opacity: 0.6;
+}
+
+.music-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.music-label {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--magenta);
+}
+
+.music-track {
+    font-size: 0.9rem;
+    font-weight: 400;
+    color: var(--white-80);
+}
+
+/* Animated equalizer bars */
+.music-eq {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 20px;
+    margin-left: 8px;
+}
+
+.eq-bar {
+    width: 3px;
+    background: var(--magenta);
+    border-radius: 2px;
+    animation: eqBounce 0.8s ease-in-out infinite alternate;
+}
+
+.eq-bar       { height: 8px;  animation-delay: 0s; }
+.eq-bar.bar-2 { height: 14px; animation-delay: 0.15s; }
+.eq-bar.bar-3 { height: 6px;  animation-delay: 0.3s; }
+.eq-bar.bar-4 { height: 18px; animation-delay: 0.45s; }
+.eq-bar.bar-5 { height: 10px; animation-delay: 0.6s; }
+
+@keyframes eqBounce {
+    0%   { height: 4px; opacity: 0.5; }
+    100% { height: 20px; opacity: 1; }
+}
+
+@keyframes noteFloat {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(-4px) rotate(8deg); }
+}
+
+
 /* ─── Utility Classes ───────────────────────────────────────────────────── */
 .hidden {
     display: none !important;
@@ -724,4 +828,57 @@ body { scrollbar-width: none; }
     .greeting-text {
         font-size: 1.2rem;
     }
+}
+
+
+/* ─── Speech Debug Bar ──────────────────────────────────────────────────── */
+.speech-debug {
+    position: fixed;
+    bottom: 60px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(6px);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    z-index: 50;
+    pointer-events: none;
+    max-width: 700px;
+}
+
+.speech-debug-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #39ff14;
+    flex-shrink: 0;
+    animation: speechPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes speechPulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+}
+
+.speech-debug-text {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.speech-debug.wake-detected .speech-debug-dot {
+    background: #00e5ff;
+    animation: none;
+    box-shadow: 0 0 8px #00e5ff;
+}
+
+.speech-debug.wake-detected .speech-debug-text {
+    color: #00e5ff;
 }

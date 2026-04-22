@@ -8,7 +8,6 @@ import numpy as np
 import base64
 import logging
 from pathlib import Path
-from deepface import DeepFace
 from backend.config import (
     KNOWN_FACES_DIR,
     FACE_DETECT_BACKEND,
@@ -16,6 +15,27 @@ from backend.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ─── Lazy DeepFace Import (avoids TF segfault on Pi at startup) ─────────────
+_deepface = None
+_deepface_failed = False
+
+
+def _get_deepface():
+    """Lazy-load DeepFace on first use instead of at import time."""
+    global _deepface, _deepface_failed
+    if _deepface_failed:
+        return None
+    if _deepface is None:
+        try:
+            from deepface import DeepFace as _df
+            _deepface = _df
+            logger.info("DeepFace loaded successfully")
+        except Exception as e:
+            _deepface_failed = True
+            logger.error(f"DeepFace failed to load (face features disabled): {e}")
+            return None
+    return _deepface
 
 
 def decode_frame(b64_data: str) -> np.ndarray | None:
@@ -43,8 +63,12 @@ def identify(frame: np.ndarray) -> dict | None:
     if not KNOWN_FACES_DIR.exists() or not any(KNOWN_FACES_DIR.iterdir()):
         return None
 
+    DF = _get_deepface()
+    if DF is None:
+        return None
+
     try:
-        results = DeepFace.find(
+        results = DF.find(
             img_path=frame,
             db_path=str(KNOWN_FACES_DIR),
             model_name=FACE_RECOGNITION_MODEL,
@@ -78,8 +102,12 @@ def detect_emotion(frame: np.ndarray) -> str | None:
     Detect the dominant emotion in a face within the frame.
     Returns emotion string: happy, sad, angry, surprise, fear, neutral, disgust
     """
+    DF = _get_deepface()
+    if DF is None:
+        return None
+
     try:
-        analysis = DeepFace.analyze(
+        analysis = DF.analyze(
             img_path=frame,
             actions=["emotion"],
             detector_backend=FACE_DETECT_BACKEND,

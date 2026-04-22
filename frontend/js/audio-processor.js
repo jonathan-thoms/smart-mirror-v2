@@ -6,7 +6,7 @@
 class AudioCaptureProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this._bufferSize = 4096; // ~256ms at 16kHz
+        this._bufferSize = 8192; // ~170ms at 48kHz, sends ~2730 samples at 16kHz
         this._buffer = new Float32Array(this._bufferSize);
         this._bytesWritten = 0;
     }

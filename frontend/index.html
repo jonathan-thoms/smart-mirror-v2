@@ -127,10 +127,35 @@
             <span id="conn-text">Connecting...</span>
         </div>
 
+        <!-- ── Music Now Playing Bar ──────────────────────────────────── -->
+        <div id="music-notification" class="music-notification hidden">
+            <div class="music-icon">
+                <span class="music-note">♪</span>
+                <span class="music-note note-2">♫</span>
+            </div>
+            <div class="music-info">
+                <div id="music-label" class="music-label">Now Playing</div>
+                <div id="music-track" class="music-track">Upbeat Vibes</div>
+            </div>
+            <div class="music-eq">
+                <span class="eq-bar"></span>
+                <span class="eq-bar bar-2"></span>
+                <span class="eq-bar bar-3"></span>
+                <span class="eq-bar bar-4"></span>
+                <span class="eq-bar bar-5"></span>
+            </div>
+        </div>
+
         <!-- ── Mood Scan Indicator ────────────────────────────────────── -->
         <div id="mood-scanner" class="mood-scanner hidden">
             <div class="scan-bar"></div>
             <span class="scan-text">Scanning mood...</span>
+        </div>
+
+        <!-- ── Live Speech Debug Bar ───────────────────────────────────── -->
+        <div id="speech-debug" class="speech-debug">
+            <span class="speech-debug-dot"></span>
+            <span id="speech-debug-text" class="speech-debug-text">Waiting for speech...</span>
         </div>
 
     </div>
