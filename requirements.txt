@@ -5,10 +5,10 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 websockets>=12.0
 
-# Vision & AI
+# Vision & AI (Pi-compatible — no TensorFlow needed)
 opencv-python-headless>=4.9.0
-deepface>=0.0.93
-tf-keras
+face_recognition>=1.3.0
+dlib>=19.24.0
 numpy
 Pillow
 

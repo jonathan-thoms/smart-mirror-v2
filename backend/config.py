@@ -28,12 +28,11 @@ NIFTY_SYMBOL: str = "^NSEI"               # Yahoo Finance ticker for NIFTY 50
 MARKET_POLL_INTERVAL: int = 30             # seconds
 
 
-# ─── Vision / AI ────────────────────────────────────────────────────────────
+# ─── Vision / AI ────────────────────────────────────────────────────────
 KNOWN_FACES_DIR: Path = ROOT_DIR / "backend" / "known_faces"
-FACE_DETECT_BACKEND: str = "opencv"        # fastest for real-time
-FACE_RECOGNITION_MODEL: str = "VGG-Face"
-EMOTION_SCAN_WINDOW: float = 5.0           # seconds of mood sampling
-MOOD_COOLDOWN: int = 3600                  # seconds (1 hour)
+FACE_MATCH_TOLERANCE: float = 0.6       # face_recognition distance threshold
+EMOTION_SCAN_WINDOW: float = 5.0        # seconds of mood sampling
+MOOD_COOLDOWN: int = 3600               # seconds (1 hour)
 
 
 # ─── Voice / Audio ──────────────────────────────────────────────────────────

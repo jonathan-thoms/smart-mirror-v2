@@ -1,6 +1,7 @@
 """
 Smart Mirror — Face Engine
-Face recognition and emotion detection via DeepFace.
+Face recognition via `face_recognition` (dlib) — lightweight, Pi-compatible.
+Emotion detection via simple heuristics (no TensorFlow required).
 """
 
 import cv2
@@ -8,34 +9,92 @@ import numpy as np
 import base64
 import logging
 from pathlib import Path
-from backend.config import (
-    KNOWN_FACES_DIR,
-    FACE_DETECT_BACKEND,
-    FACE_RECOGNITION_MODEL,
-)
+from backend.config import KNOWN_FACES_DIR
 
 logger = logging.getLogger(__name__)
 
-# ─── Lazy DeepFace Import (avoids TF segfault on Pi at startup) ─────────────
-_deepface = None
-_deepface_failed = False
+# ─── Lazy import face_recognition (dlib-based, no TensorFlow) ────────────────
+_face_rec = None
+_face_rec_failed = False
+
+# Valid image extensions for known faces
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+# ─── Known face encodings cache ─────────────────────────────────────────────
+_known_encodings: list[np.ndarray] = []
+_known_names: list[str] = []
+_encodings_loaded = False
 
 
-def _get_deepface():
-    """Lazy-load DeepFace on first use instead of at import time."""
-    global _deepface, _deepface_failed
-    if _deepface_failed:
+def _get_face_recognition():
+    """Lazy-load the face_recognition library."""
+    global _face_rec, _face_rec_failed
+    if _face_rec_failed:
         return None
-    if _deepface is None:
+    if _face_rec is None:
         try:
-            from deepface import DeepFace as _df
-            _deepface = _df
-            logger.info("DeepFace loaded successfully")
-        except Exception as e:
-            _deepface_failed = True
-            logger.error(f"DeepFace failed to load (face features disabled): {e}")
+            import face_recognition as fr
+            _face_rec = fr
+            logger.info("face_recognition library loaded successfully")
+        except ImportError:
+            _face_rec_failed = True
+            logger.error(
+                "face_recognition not installed. Install with:\n"
+                "  sudo apt install -y cmake libboost-all-dev libdlib-dev\n"
+                "  pip install face_recognition"
+            )
             return None
-    return _deepface
+        except Exception as e:
+            _face_rec_failed = True
+            logger.error(f"face_recognition failed to load: {e}")
+            return None
+    return _face_rec
+
+
+def _load_known_faces():
+    """Load and encode all known face images from the gallery directory."""
+    global _known_encodings, _known_names, _encodings_loaded
+
+    if _encodings_loaded:
+        return
+
+    fr = _get_face_recognition()
+    if fr is None:
+        _encodings_loaded = True
+        return
+
+    if not KNOWN_FACES_DIR.exists():
+        logger.warning(f"Known faces directory not found: {KNOWN_FACES_DIR}")
+        _encodings_loaded = True
+        return
+
+    count = 0
+    for img_path in KNOWN_FACES_DIR.iterdir():
+        # Only process actual image files
+        if not img_path.is_file():
+            continue
+        if img_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        try:
+            image = fr.load_image_file(str(img_path))
+            encodings = fr.face_encodings(image)
+
+            if encodings:
+                _known_encodings.append(encodings[0])
+                # Extract name from filename: "jonathan.jpeg" → "Jonathan"
+                name = img_path.stem.split("_")[0].title()
+                _known_names.append(name)
+                count += 1
+                logger.info(f"Loaded face: {name} from {img_path.name}")
+            else:
+                logger.warning(f"No face found in {img_path.name} — skipped")
+
+        except Exception as e:
+            logger.warning(f"Failed to load face from {img_path.name}: {e}")
+
+    _encodings_loaded = True
+    logger.info(f"Known faces loaded: {count} face(s) from {KNOWN_FACES_DIR}")
 
 
 def decode_frame(b64_data: str) -> np.ndarray | None:
@@ -57,40 +116,48 @@ def decode_frame(b64_data: str) -> np.ndarray | None:
 def identify(frame: np.ndarray) -> dict | None:
     """
     Identify a face in the frame against the known_faces gallery.
-    Each file in known_faces/ should be named <person_name>.jpg
+    Uses face_recognition (dlib) — no TensorFlow required.
     Returns: {"name": str, "confidence": float} or None
     """
-    if not KNOWN_FACES_DIR.exists() or not any(KNOWN_FACES_DIR.iterdir()):
+    fr = _get_face_recognition()
+    if fr is None:
         return None
 
-    DF = _get_deepface()
-    if DF is None:
+    # Load known faces on first call
+    _load_known_faces()
+
+    if not _known_encodings:
         return None
 
     try:
-        results = DF.find(
-            img_path=frame,
-            db_path=str(KNOWN_FACES_DIR),
-            model_name=FACE_RECOGNITION_MODEL,
-            detector_backend=FACE_DETECT_BACKEND,
-            enforce_detection=False,
-            silent=True,
-        )
+        # Convert BGR (OpenCV) to RGB (face_recognition)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        if results and len(results) > 0 and len(results[0]) > 0:
-            df = results[0]
-            if not df.empty:
-                best_match = df.iloc[0]
-                identity_path = best_match.get("identity", "")
-                distance = best_match.get("distance", 1.0)
+        # Downscale for speed on Pi
+        small_frame = cv2.resize(rgb_frame, (0, 0), fx=0.5, fy=0.5)
 
-                # Extract person name from filename
-                name = Path(identity_path).stem.split("_")[0].title()
-                confidence = round(max(0, 1 - distance), 2)
+        # Detect faces in the frame
+        face_locations = fr.face_locations(small_frame, model="hog")
+        if not face_locations:
+            return None
 
-                if confidence > 0.40:  # Minimum confidence threshold
-                    logger.info(f"Face identified: {name} ({confidence})")
-                    return {"name": name, "confidence": confidence}
+        # Encode detected faces
+        face_encodings = fr.face_encodings(small_frame, face_locations)
+        if not face_encodings:
+            return None
+
+        # Compare against known faces
+        for encoding in face_encodings:
+            distances = fr.face_distance(_known_encodings, encoding)
+            best_idx = np.argmin(distances)
+            best_distance = distances[best_idx]
+
+            # Distance threshold: lower = better match (0.6 is standard)
+            if best_distance < 0.6:
+                confidence = round(max(0, 1 - best_distance), 2)
+                name = _known_names[best_idx]
+                logger.info(f"Face identified: {name} ({confidence})")
+                return {"name": name, "confidence": confidence}
 
     except Exception as e:
         logger.warning(f"Face identification failed: {e}")
@@ -99,28 +166,34 @@ def identify(frame: np.ndarray) -> dict | None:
 
 def detect_emotion(frame: np.ndarray) -> str | None:
     """
-    Detect the dominant emotion in a face within the frame.
-    Returns emotion string: happy, sad, angry, surprise, fear, neutral, disgust
+    Lightweight emotion estimation using face analysis heuristics.
+    Returns a fixed 'neutral' since proper emotion detection requires
+    heavy ML models. The greeting system still works — it just defaults
+    to a neutral/welcoming mood.
+    
+    For full emotion detection on Pi, consider using a TFLite model
+    in the future.
     """
-    DF = _get_deepface()
-    if DF is None:
-        return None
-
     try:
-        analysis = DF.analyze(
-            img_path=frame,
-            actions=["emotion"],
-            detector_backend=FACE_DETECT_BACKEND,
-            enforce_detection=False,
-            silent=True,
+        # Simple face detection check — if a face is visible, return neutral
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
         )
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4, minSize=(60, 60))
 
-        if analysis:
-            result = analysis[0] if isinstance(analysis, list) else analysis
-            dominant = result.get("dominant_emotion")
-            if dominant:
-                return dominant.lower()
+        if len(faces) > 0:
+            return "neutral"
 
     except Exception as e:
         logger.warning(f"Emotion detection failed: {e}")
     return None
+
+
+def reload_known_faces():
+    """Force reload of known face encodings (call after adding new photos)."""
+    global _known_encodings, _known_names, _encodings_loaded
+    _known_encodings = []
+    _known_names = []
+    _encodings_loaded = False
+    _load_known_faces()

@@ -107,24 +107,98 @@
 
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  2. CAMERA INITIALISATION
+    //  2. CAMERA INITIALISATION (with Pi-compatible retry logic)
     // ═══════════════════════════════════════════════════════════════════════
 
+    // Camera constraint profiles to try in order (Pi Chromium can be picky)
+    const CAMERA_PROFILES = [
+        // Profile 1: Ideal settings
+        {
+            video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: "user",
+            },
+            audio: false,
+        },
+        // Profile 2: Without facingMode (some Pi cameras don't support it)
+        {
+            video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+            },
+            audio: false,
+        },
+        // Profile 3: Bare minimum — just request any video
+        {
+            video: true,
+            audio: false,
+        },
+    ];
+
     async function initCamera() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width:  { ideal: 640 },
-                    height: { ideal: 480 },
-                    facingMode: "user",
-                },
-                audio: false,  // Audio handled separately
-            });
-            video.srcObject = stream;
-            console.log("📷 Camera initialised");
-        } catch (err) {
-            console.error("⛔ Camera access denied:", err);
+        // Check if getUserMedia is available at all
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            console.error("⛔ getUserMedia not available — need HTTPS or localhost");
+            showCameraError("Camera API unavailable. Ensure you're on localhost or HTTPS.");
+            return;
         }
+
+        for (let i = 0; i < CAMERA_PROFILES.length; i++) {
+            try {
+                console.log(`📷 Trying camera profile ${i + 1}/${CAMERA_PROFILES.length}...`);
+                const stream = await navigator.mediaDevices.getUserMedia(CAMERA_PROFILES[i]);
+                video.srcObject = stream;
+
+                // Wait for video to actually start playing
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        video.play().then(resolve).catch(reject);
+                    };
+                    // Timeout after 5 seconds
+                    setTimeout(() => reject(new Error("Video load timeout")), 5000);
+                });
+
+                console.log(`📷 Camera initialised (profile ${i + 1}, ${video.videoWidth}x${video.videoHeight})`);
+                hideCameraError();
+                return; // Success!
+
+            } catch (err) {
+                console.warn(`📷 Profile ${i + 1} failed:`, err.name, err.message);
+
+                if (err.name === "NotAllowedError") {
+                    showCameraError("Camera permission denied. Please allow camera access and reload.");
+                    return; // No point retrying if permission denied
+                }
+            }
+        }
+
+        // All profiles failed
+        console.error("⛔ All camera profiles failed");
+        showCameraError("Camera not detected. Check USB connection and reload.");
+    }
+
+    function showCameraError(message) {
+        let banner = document.getElementById("camera-error");
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.id = "camera-error";
+            banner.style.cssText = `
+                position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                z-index: 100; background: rgba(255,51,102,0.15); backdrop-filter: blur(12px);
+                border: 1px solid rgba(255,51,102,0.3); border-radius: 16px;
+                padding: 24px 36px; text-align: center; font-family: var(--font);
+                color: #ff3366; font-size: 0.95rem; max-width: 420px;
+                pointer-events: auto;
+            `;
+            document.getElementById("overlay").appendChild(banner);
+        }
+        banner.innerHTML = `<div style="font-size:2rem;margin-bottom:8px">📷</div>${message}`;
+    }
+
+    function hideCameraError() {
+        const banner = document.getElementById("camera-error");
+        if (banner) banner.remove();
     }
 
 
