@@ -334,12 +334,13 @@ async def handle_voice_command(ws: WebSocket, text: str):
     active_session = session_mgr.get_active_session()
     user = active_session.name if active_session else "user"
 
-    # Check if it's a direct command (task, weather, market)
+    # Check if it's a direct command (task, weather, market, etc.)
     command = assistant.parse_command(text)
 
     if command:
         action = command["action"]
 
+        # ── Task Commands ───────────────────────────────────────────
         if action == "add_task":
             tasks = session_mgr.add_task(user, command["text"])
             await safe_send(ws, {
@@ -386,6 +387,7 @@ async def handle_voice_command(ws: WebSocket, text: str):
             })
             reply = "Cleared all completed tasks."
 
+        # ── Info Commands ───────────────────────────────────────────
         elif action == "weather":
             if data_feeds.latest_weather:
                 w = data_feeds.latest_weather
@@ -415,6 +417,229 @@ async def handle_voice_command(ws: WebSocket, text: str):
                 })
             else:
                 reply = "Market data is not available right now."
+
+        # ── Music Commands ──────────────────────────────────────────
+        elif action == "pause_music":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "pause"}
+            })
+            reply = "Music paused."
+
+        elif action == "resume_music":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "resume"}
+            })
+            reply = "Resuming music."
+
+        elif action == "stop_music":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "stop"}
+            })
+            reply = "Music stopped."
+
+        elif action == "play_music":
+            # Pick a track based on last known mood or default to neutral
+            last_mood = session_mgr.get_last_mood(user) or "neutral"
+            track = music_player.get_track_for_mood(last_mood)
+            if track:
+                await safe_send(ws, {
+                    "type": "play_music",
+                    "data": track
+                })
+                await safe_send(ws, {
+                    "type": "music_notification",
+                    "data": {
+                        "mood": last_mood,
+                        "label": "Now Playing",
+                        "has_track": True,
+                        "track_name": track["track"],
+                    }
+                })
+                reply = f"Playing some {last_mood} vibes for you."
+            else:
+                reply = "Sorry, I don't have any music tracks available right now."
+
+        elif action == "next_track":
+            last_mood = session_mgr.get_last_mood(user) or "neutral"
+            track = music_player.get_track_for_mood(last_mood)
+            if track:
+                await safe_send(ws, {
+                    "type": "music_control",
+                    "data": {"action": "stop"}
+                })
+                await safe_send(ws, {
+                    "type": "play_music",
+                    "data": track
+                })
+                await safe_send(ws, {
+                    "type": "music_notification",
+                    "data": {
+                        "mood": last_mood,
+                        "label": "Now Playing",
+                        "has_track": True,
+                        "track_name": track["track"],
+                    }
+                })
+                reply = "Skipping to the next track."
+            else:
+                reply = "No more tracks available."
+
+        elif action == "now_playing":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "now_playing"}
+            })
+            reply = "Check the screen for what's currently playing."
+
+        elif action == "volume_up":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "volume_up"}
+            })
+            reply = "Volume increased."
+
+        elif action == "volume_down":
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "volume_down"}
+            })
+            reply = "Volume decreased."
+
+        elif action == "set_volume":
+            level = command["level"]
+            await safe_send(ws, {
+                "type": "music_control",
+                "data": {"action": "set_volume", "volume": level}
+            })
+            reply = f"Volume set to {level}%."
+
+        # ── Time & Date ─────────────────────────────────────────────
+        elif action == "time":
+            from datetime import datetime
+            now = datetime.now()
+            time_str = now.strftime("%I:%M %p")
+            reply = f"It's currently {time_str}."
+
+        elif action == "date":
+            from datetime import datetime
+            now = datetime.now()
+            date_str = now.strftime("%A, %B %d, %Y")
+            reply = f"Today is {date_str}."
+
+        # ── Mood & Greeting ─────────────────────────────────────────
+        elif action == "scan_mood":
+            if user != "user":
+                session_mgr.force_mood_rescan(user)
+                await safe_send(ws, {
+                    "type": "force_mood_scan",
+                    "data": {"user": user}
+                })
+                reply = "Starting a fresh mood scan. Hold still for a moment!"
+            else:
+                reply = "I need to recognize your face first before scanning your mood."
+
+        elif action == "greet_me":
+            last_mood = session_mgr.get_last_mood(user) or "neutral"
+            await send_mood_greeting(ws, user, last_mood)
+            reply = None  # Greeting handler already sends TTS
+
+        # ── Identity ────────────────────────────────────────────────
+        elif action == "who_am_i":
+            if user != "user":
+                reply = f"You are {user.title()}! I recognized you."
+            else:
+                reply = "I haven't been able to identify you yet. Make sure you're facing the camera."
+
+        # ── Widget Visibility ───────────────────────────────────────
+        elif action == "hide_widget":
+            widget = command["widget"]
+            await safe_send(ws, {
+                "type": "widget_visibility",
+                "data": {"widget": widget, "visible": False}
+            })
+            reply = f"{widget.title()} panel hidden."
+
+        elif action == "show_widget":
+            widget = command["widget"]
+            await safe_send(ws, {
+                "type": "widget_visibility",
+                "data": {"widget": widget, "visible": True}
+            })
+            # Also push fresh data if applicable
+            if widget == "weather" and data_feeds.latest_weather:
+                await safe_send(ws, {
+                    "type": "weather",
+                    "data": data_feeds.latest_weather
+                })
+            elif widget == "market" and data_feeds.latest_market:
+                await safe_send(ws, {
+                    "type": "market",
+                    "data": data_feeds.latest_market
+                })
+            elif widget == "tasks":
+                tasks = session_mgr.get_tasks(user)
+                await safe_send(ws, {
+                    "type": "tasks",
+                    "data": {"user": user, "items": tasks}
+                })
+            reply = f"{widget.title()} panel is now visible."
+
+        elif action == "clear_screen":
+            await safe_send(ws, {
+                "type": "widget_visibility",
+                "data": {"widget": "all", "visible": False}
+            })
+            reply = "Display cleared. Say 'show all' to restore."
+
+        elif action == "show_all":
+            await safe_send(ws, {
+                "type": "widget_visibility",
+                "data": {"widget": "all", "visible": True}
+            })
+            # Push all latest data
+            await send_feed_data(ws)
+            tasks = session_mgr.get_tasks(user)
+            await safe_send(ws, {
+                "type": "tasks",
+                "data": {"user": user, "items": tasks}
+            })
+            reply = "All panels restored."
+
+        # ── Display Sleep / Wake ────────────────────────────────────
+        elif action == "sleep_display":
+            await safe_send(ws, {
+                "type": "display_mode",
+                "data": {"mode": "sleep"}
+            })
+            reply = "Good night! The display is going to sleep."
+
+        elif action == "wake_display":
+            await safe_send(ws, {
+                "type": "display_mode",
+                "data": {"mode": "wake"}
+            })
+            reply = "Good morning! Display is back on."
+
+        # ── Chat Management ─────────────────────────────────────────
+        elif action == "clear_chat":
+            assistant.clear_history(user)
+            reply = "Conversation cleared. Let's start fresh!"
+
+        # ── Help ────────────────────────────────────────────────────
+        elif action == "help":
+            reply = (
+                "Here's what I can do! "
+                "Tasks: add, complete, remove, or list tasks. "
+                "Info: ask about weather, market, time, or date. "
+                "Music: play, pause, resume, stop, skip, or change volume. "
+                "Mood: scan your mood or ask for a greeting. "
+                "Display: hide or show widgets, sleep, or wake the screen. "
+                "Or just chat with me about anything!"
+            )
+
         else:
             reply = "I didn't understand that command."
 
@@ -429,20 +654,21 @@ async def handle_voice_command(ws: WebSocket, text: str):
             None, assistant.chat, user, text
         )
 
-    # Send assistant response
-    await safe_send(ws, {
-        "type": "assistant_response",
-        "data": {"text": reply, "user": user}
-    })
-
-    # Stream TTS of the response to the Pi
-    audio_playing = True
-    tts_b64 = await generate_tts(reply)
-    if tts_b64:
+    # Send assistant response (skip if handler already sent TTS, e.g. greet_me)
+    if reply is not None:
         await safe_send(ws, {
-            "type": "tts_audio",
-            "data": tts_b64
+            "type": "assistant_response",
+            "data": {"text": reply, "user": user}
         })
+
+        # Stream TTS of the response to the Pi
+        audio_playing = True
+        tts_b64 = await generate_tts(reply)
+        if tts_b64:
+            await safe_send(ws, {
+                "type": "tts_audio",
+                "data": tts_b64
+            })
 
     await safe_send(ws, {
         "type": "voice_status",

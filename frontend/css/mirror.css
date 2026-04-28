@@ -882,3 +882,34 @@ body { scrollbar-width: none; }
 .speech-debug.wake-detected .speech-debug-text {
     color: #00e5ff;
 }
+
+
+/* ─── Sleep Mode (voice-activated display dimming) ──────────────────────── */
+body.sleep-mode #overlay {
+    opacity: 0;
+    transition: opacity 1.5s ease-in-out;
+}
+
+body.sleep-mode #camera-feed {
+    filter: brightness(0) contrast(0);
+    transition: filter 1.5s ease-in-out;
+}
+
+/* Keep the voice orb visible so the user can wake it */
+body.sleep-mode #widget-voice {
+    opacity: 0.3;
+    position: fixed;
+    bottom: var(--pad-md);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+}
+
+/* Smooth transition back when waking */
+body:not(.sleep-mode) #overlay {
+    transition: opacity 0.8s ease-out;
+}
+
+body:not(.sleep-mode) #camera-feed {
+    transition: filter 0.8s ease-out;
+}

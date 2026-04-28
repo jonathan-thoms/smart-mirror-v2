@@ -115,6 +115,24 @@ class SessionManager:
             return self.sessions[key].add_emotion(emotion)
         return None
 
+    def force_mood_rescan(self, name: str):
+        """Reset mood cooldown so next frame triggers a fresh scan."""
+        key = name.lower()
+        if key in self.sessions:
+            self.sessions[key].mood_cooldown_until = 0.0
+            self.sessions[key].mood_scan_start = None
+            self.sessions[key].emotion_samples.clear()
+            logger.info(f"Mood rescan forced for {key}")
+            return True
+        return False
+
+    def get_last_mood(self, name: str) -> str | None:
+        """Return the last detected mood for a user."""
+        key = name.lower()
+        if key in self.sessions:
+            return self.sessions[key].current_mood
+        return None
+
     # ── Task management (voice-driven) ──────────────────────────────────
     def _load_tasks(self) -> dict:
         try:

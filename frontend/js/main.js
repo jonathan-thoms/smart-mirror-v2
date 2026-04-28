@@ -436,18 +436,22 @@
 
     function routeMessage(msg) {
         switch (msg.type) {
-            case "weather":           updateWeather(msg.data);          break;
-            case "market":            updateMarket(msg.data);           break;
-            case "face_result":       updateFace(msg.data);             break;
-            case "mood_result":       updateMoodResult(msg.data);       break;
-            case "mood_status":       updateMoodStatus(msg.data);       break;
-            case "greeting":          showGreeting(msg.data);           break;
-            case "tasks":             updateTasks(msg.data);            break;
-            case "tts_audio":         playTTSAudio(msg.data);           break;
-            case "play_music":        playMusic(msg.data);              break;
-            case "music_notification": showMusicNotification(msg.data); break;
-            case "assistant_response": showAssistantResponse(msg.data); break;
-            case "voice_status":      updateVoiceStatus(msg.data);      break;
+            case "weather":            updateWeather(msg.data);          break;
+            case "market":             updateMarket(msg.data);           break;
+            case "face_result":        updateFace(msg.data);             break;
+            case "mood_result":        updateMoodResult(msg.data);       break;
+            case "mood_status":        updateMoodStatus(msg.data);       break;
+            case "greeting":           showGreeting(msg.data);           break;
+            case "tasks":              updateTasks(msg.data);            break;
+            case "tts_audio":          playTTSAudio(msg.data);           break;
+            case "play_music":         playMusic(msg.data);              break;
+            case "music_notification":  showMusicNotification(msg.data); break;
+            case "assistant_response":  showAssistantResponse(msg.data); break;
+            case "voice_status":       updateVoiceStatus(msg.data);      break;
+            case "music_control":      handleMusicControl(msg.data);     break;
+            case "widget_visibility":  handleWidgetVisibility(msg.data); break;
+            case "display_mode":       handleDisplayMode(msg.data);      break;
+            case "force_mood_scan":    handleForceMoodScan(msg.data);    break;
             default:
                 console.log("Unknown message type:", msg.type);
         }
@@ -607,20 +611,164 @@
     }
 
     // ── Music Playback ─────────────────────────────────────────────────────
+    let currentMusicAudio = null;
+    let currentMusicVolume = 0.4;
+    let currentTrackName = null;
+
     function playMusic(data) {
         if (!data || !data.url) return;
 
+        // Stop any currently playing music
+        if (currentMusicAudio) {
+            currentMusicAudio.pause();
+            currentMusicAudio = null;
+        }
+
         // Music is served as static files from the backend
         const musicUrl = `${window.location.origin}${data.url}`;
-        const audio = new Audio(musicUrl);
-        audio.volume = 0.4; // Background music volume
-        audio.onended = () => {
+        currentMusicAudio = new Audio(musicUrl);
+        currentMusicAudio.volume = currentMusicVolume;
+        currentTrackName = data.track || data.url.split("/").pop();
+        currentMusicAudio.onended = () => {
             isTTSPlaying = false;
+            currentMusicAudio = null;
+            currentTrackName = null;
             notifyAudioDone();
         };
-        audio.play().catch(err => {
+        currentMusicAudio.play().catch(err => {
             console.warn("Music playback failed:", err);
         });
+    }
+
+    // ── Music Control (voice-driven) ──────────────────────────────────────
+    function handleMusicControl(data) {
+        if (!data || !data.action) return;
+
+        switch (data.action) {
+            case "pause":
+                if (currentMusicAudio && !currentMusicAudio.paused) {
+                    currentMusicAudio.pause();
+                    console.log("🎵 Music paused");
+                }
+                break;
+
+            case "resume":
+                if (currentMusicAudio && currentMusicAudio.paused) {
+                    currentMusicAudio.play().catch(e => console.warn("Resume failed:", e));
+                    console.log("🎵 Music resumed");
+                }
+                break;
+
+            case "stop":
+                if (currentMusicAudio) {
+                    currentMusicAudio.pause();
+                    currentMusicAudio.currentTime = 0;
+                    currentMusicAudio = null;
+                    currentTrackName = null;
+                    console.log("🎵 Music stopped");
+                    notifyAudioDone();
+                }
+                // Also hide the music notification
+                musicNotif.classList.add("hidden");
+                break;
+
+            case "volume_up":
+                currentMusicVolume = Math.min(1.0, currentMusicVolume + 0.1);
+                if (currentMusicAudio) currentMusicAudio.volume = currentMusicVolume;
+                console.log(`🎵 Volume: ${Math.round(currentMusicVolume * 100)}%`);
+                break;
+
+            case "volume_down":
+                currentMusicVolume = Math.max(0.0, currentMusicVolume - 0.1);
+                if (currentMusicAudio) currentMusicAudio.volume = currentMusicVolume;
+                console.log(`🎵 Volume: ${Math.round(currentMusicVolume * 100)}%`);
+                break;
+
+            case "set_volume":
+                if (data.volume !== undefined) {
+                    currentMusicVolume = Math.min(1.0, Math.max(0.0, data.volume / 100));
+                    if (currentMusicAudio) currentMusicAudio.volume = currentMusicVolume;
+                    console.log(`🎵 Volume set to: ${Math.round(currentMusicVolume * 100)}%`);
+                }
+                break;
+
+            case "now_playing":
+                // Re-show the music notification with current track
+                if (currentTrackName && currentMusicAudio && !currentMusicAudio.paused) {
+                    musicLabel.textContent = "NOW PLAYING";
+                    musicTrack.textContent = currentTrackName;
+                    musicNotif.classList.remove("hidden");
+                    if (musicNotifTimer) clearTimeout(musicNotifTimer);
+                    musicNotifTimer = setTimeout(() => {
+                        musicNotif.classList.add("hidden");
+                        musicNotifTimer = null;
+                    }, MUSIC_DISPLAY_TIME);
+                }
+                break;
+        }
+    }
+
+    // ── Widget Visibility (voice-driven) ──────────────────────────────────
+    const WIDGET_ID_MAP = {
+        weather: "widget-weather",
+        market:  "widget-market",
+        tasks:   "widget-user",
+        clock:   "widget-clock",
+    };
+
+    function handleWidgetVisibility(data) {
+        if (!data) return;
+
+        const { widget, visible } = data;
+
+        if (widget === "all") {
+            // Toggle all main widgets
+            Object.values(WIDGET_ID_MAP).forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    if (visible) {
+                        el.classList.remove("hidden");
+                    } else {
+                        el.classList.add("hidden");
+                    }
+                }
+            });
+            console.log(`👁 All widgets ${visible ? "shown" : "hidden"}`);
+            return;
+        }
+
+        const elId = WIDGET_ID_MAP[widget];
+        if (elId) {
+            const el = document.getElementById(elId);
+            if (el) {
+                if (visible) {
+                    el.classList.remove("hidden");
+                } else {
+                    el.classList.add("hidden");
+                }
+                console.log(`👁 Widget "${widget}" ${visible ? "shown" : "hidden"}`);
+            }
+        }
+    }
+
+    // ── Display Mode (sleep / wake) ───────────────────────────────────────
+    function handleDisplayMode(data) {
+        if (!data || !data.mode) return;
+
+        if (data.mode === "sleep") {
+            document.body.classList.add("sleep-mode");
+            console.log("💤 Display entering sleep mode");
+        } else if (data.mode === "wake") {
+            document.body.classList.remove("sleep-mode");
+            console.log("☀ Display waking up");
+        }
+    }
+
+    // ── Force Mood Scan ───────────────────────────────────────────────────
+    function handleForceMoodScan(data) {
+        // Show the scanning indicator
+        moodScanner.classList.remove("hidden");
+        console.log("😊 Mood rescan triggered by voice");
     }
 
     // ── Music Notification ("Now Playing" bar) ─────────────────────────────
